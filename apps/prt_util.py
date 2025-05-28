@@ -5,6 +5,7 @@ import math
 from scipy.special import sph_harm
 import argparse
 from tqdm import tqdm
+import gc
 
 def factratio(N, D):
     if N >= D:
@@ -95,31 +96,45 @@ def computePRT(mesh_path, n, order):
     normals = mesh.vertex_normals
     n_v = origins.shape[0]
 
-    origins = np.repeat(origins[:,None], n, axis=1).reshape(-1,3)
-    normals = np.repeat(normals[:,None], n, axis=1).reshape(-1,3)
-    PRT_all = None
+    # Giảm kích thước batch xuống 100
+    batch_size = 100
+    n_batches = (n_v + batch_size - 1) // batch_size
+    
+    # Khởi tạo PRT_all với float32 để tiết kiệm bộ nhớ
+    PRT_all = np.zeros((n_v, SH_orig.shape[1]), dtype=np.float32)
+    
     for i in tqdm(range(n)):
-        SH = np.repeat(SH_orig[None,(i*n):((i+1)*n)], n_v, axis=0).reshape(-1,SH_orig.shape[1])
-        vectors = np.repeat(vectors_orig[None,(i*n):((i+1)*n)], n_v, axis=0).reshape(-1,3)
-
-        dots = (vectors * normals).sum(1)
-        front = (dots > 0.0)
-
-        delta = 1e-3*min(mesh.bounding_box.extents)
-        hits = mesh.ray.intersects_any(origins + delta * normals, vectors)
-        nohits = np.logical_and(front, np.logical_not(hits))
-
-        PRT = (nohits.astype(np.float) * dots)[:,None] * SH
+        SH = SH_orig[(i*n):((i+1)*n)]
+        vectors = vectors_orig[(i*n):((i+1)*n)]
         
-        if PRT_all is not None:
-            PRT_all += (PRT.reshape(-1, n, SH.shape[1]).sum(1))
-        else:
-            PRT_all = (PRT.reshape(-1, n, SH.shape[1]).sum(1))
+        for b in range(n_batches):
+            start_idx = b * batch_size
+            end_idx = min((b + 1) * batch_size, n_v)
+            
+            batch_origins = origins[start_idx:end_idx]
+            batch_normals = normals[start_idx:end_idx]
+            
+            # Tính toán cho batch hiện tại
+            batch_origins = np.repeat(batch_origins[:,None], n, axis=1).reshape(-1,3)
+            batch_normals = np.repeat(batch_normals[:,None], n, axis=1).reshape(-1,3)
+            batch_vectors = np.repeat(vectors[None,:], end_idx-start_idx, axis=0).reshape(-1,3)
+            batch_SH = np.repeat(SH[None,:], end_idx-start_idx, axis=0).reshape(-1,SH.shape[1])
+
+            dots = (batch_vectors * batch_normals).sum(1)
+            front = (dots > 0.0)
+
+            delta = 1e-3*min(mesh.bounding_box.extents)
+            hits = mesh.ray.intersects_any(batch_origins + delta * batch_normals, batch_vectors)
+            nohits = np.logical_and(front, np.logical_not(hits))
+
+            PRT = (nohits.astype(np.float32) * dots)[:,None] * batch_SH
+            PRT_all[start_idx:end_idx] += PRT.reshape(-1, n, SH.shape[1]).sum(1)
+            
+            # Giải phóng bộ nhớ
+            del batch_origins, batch_normals, batch_vectors, batch_SH, dots, front, hits, nohits, PRT
+            gc.collect()
 
     PRT = w * PRT_all
-
-    # NOTE: trimesh sometimes break the original vertex order, but topology will not change.
-    # when loading PRT in other program, use the triangle list from trimesh.
     return PRT, mesh.faces
 
 def testPRT(dir_path, n=40):
