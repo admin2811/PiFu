@@ -1,0 +1,22 @@
+name: PIFu
+channels:
+- pytorch
+- conda-forge
+- defaults
+dependencies:
+- python=3.8
+- pytorch
+- torchvision
+- cudatoolkit=11.3
+- pillow
+- scikit-image
+- tqdm
+- pyembree
+- shapely
+- rtree
+- xxhash
+- trimesh
+- pyopengl
+- pip
+- pip:
+  - pyexr
