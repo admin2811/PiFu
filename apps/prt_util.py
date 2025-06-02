@@ -6,6 +6,8 @@ from scipy.special import sph_harm
 import argparse
 from tqdm import tqdm
 import gc
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 def factratio(N, D):
     if N >= D:
@@ -85,8 +87,42 @@ def getSHCoeffs(order, phi, theta):
     
     return np.stack(shs, 1)
 
+def process_batch(args):
+    batch_idx, vectors, SH, mesh, origins, normals, n = args
+    batch_size = len(batch_idx)
+    PRT_batch = np.zeros((batch_size, SH.shape[1]), dtype=np.float32)
+    
+    batch_origins = origins[batch_idx]
+    batch_normals = normals[batch_idx]
+    
+    # Vectorized computation
+    batch_origins_rep = np.repeat(batch_origins[:, None], n, axis=1).reshape(-1, 3)
+    batch_normals_rep = np.repeat(batch_normals[:, None], n, axis=1).reshape(-1, 3)
+    batch_vectors_rep = np.repeat(vectors[None, :], batch_size, axis=0).reshape(-1, 3)
+    batch_SH_rep = np.repeat(SH[None, :], batch_size, axis=0).reshape(-1, SH.shape[1])
+
+    dots = (batch_vectors_rep * batch_normals_rep).sum(1)
+    front = (dots > 0.0)
+
+    delta = 1e-3 * min(mesh.bounding_box.extents)
+    hits = mesh.ray.intersects_any(batch_origins_rep + delta * batch_normals_rep, batch_vectors_rep)
+    nohits = np.logical_and(front, np.logical_not(hits))
+
+    PRT = (nohits.astype(np.float32) * dots)[:, None] * batch_SH_rep
+    PRT_batch = PRT.reshape(batch_size, n, SH.shape[1]).sum(1)
+    
+    return batch_idx, PRT_batch
+
 def computePRT(mesh_path, n, order):
     mesh = trimesh.load(mesh_path, process=False)
+    
+    # Try to use faster ray intersection if available
+    try:
+        from trimesh.ray import ray_pyembree
+        mesh.ray.intersects_any = ray_pyembree.RayMeshIntersector(mesh).intersects_any
+    except ImportError:
+        print("pyembree not available, using slower ray intersection")
+    
     vectors_orig, phi, theta = sampleSphericalDirections(n)
     SH_orig = getSHCoeffs(order, phi, theta)
 
@@ -96,43 +132,30 @@ def computePRT(mesh_path, n, order):
     normals = mesh.vertex_normals
     n_v = origins.shape[0]
 
-    # Giảm kích thước batch xuống 100
-    batch_size = 100
-    n_batches = (n_v + batch_size - 1) // batch_size
+    # Adjust batch size based on available memory
+    batch_size = min(500, n_v // (cpu_count() * 2))
+    batches = [range(i, min(i + batch_size, n_v)) for i in range(0, n_v, batch_size)]
     
-    # Khởi tạo PRT_all với float32 để tiết kiệm bộ nhớ
     PRT_all = np.zeros((n_v, SH_orig.shape[1]), dtype=np.float32)
     
-    for i in tqdm(range(n)):
+    # Process each direction in parallel
+    for i in tqdm(range(n), desc="Sampling directions"):
         SH = SH_orig[(i*n):((i+1)*n)]
         vectors = vectors_orig[(i*n):((i+1)*n)]
         
-        for b in range(n_batches):
-            start_idx = b * batch_size
-            end_idx = min((b + 1) * batch_size, n_v)
-            
-            batch_origins = origins[start_idx:end_idx]
-            batch_normals = normals[start_idx:end_idx]
-            
-            # Tính toán cho batch hiện tại
-            batch_origins = np.repeat(batch_origins[:,None], n, axis=1).reshape(-1,3)
-            batch_normals = np.repeat(batch_normals[:,None], n, axis=1).reshape(-1,3)
-            batch_vectors = np.repeat(vectors[None,:], end_idx-start_idx, axis=0).reshape(-1,3)
-            batch_SH = np.repeat(SH[None,:], end_idx-start_idx, axis=0).reshape(-1,SH.shape[1])
-
-            dots = (batch_vectors * batch_normals).sum(1)
-            front = (dots > 0.0)
-
-            delta = 1e-3*min(mesh.bounding_box.extents)
-            hits = mesh.ray.intersects_any(batch_origins + delta * batch_normals, batch_vectors)
-            nohits = np.logical_and(front, np.logical_not(hits))
-
-            PRT = (nohits.astype(np.float32) * dots)[:,None] * batch_SH
-            PRT_all[start_idx:end_idx] += PRT.reshape(-1, n, SH.shape[1]).sum(1)
-            
-            # Giải phóng bộ nhớ
-            del batch_origins, batch_normals, batch_vectors, batch_SH, dots, front, hits, nohits, PRT
-            gc.collect()
+        # Prepare arguments for parallel processing
+        args = [(batch, vectors, SH, mesh, origins, normals, n) for batch in batches]
+        
+        # Use multiprocessing
+        with Pool(processes=cpu_count()) as pool:
+            results = pool.map(process_batch, args)
+        
+        # Combine results
+        for batch_idx, PRT_batch in results:
+            PRT_all[batch_idx] += PRT_batch
+        
+        # Clean up memory
+        gc.collect()
 
     PRT = w * PRT_all
     return PRT, mesh.faces
