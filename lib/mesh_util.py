@@ -32,27 +32,39 @@ def reconstruction(net, cuda, calib_tensor,
         samples = torch.from_numpy(points).to(device=cuda).float()
         net.query(samples, calib_tensor)
         pred = net.get_preds()[0][0]
-        return pred.detach().cpu().numpy()
+        pred_np = pred.detach().cpu().numpy()
+        # Transform sigmoid output [0,1] to SDF [-1,1]
+        pred_np = 2.0 * pred_np - 1.0
+        # Debug information for predictions
+        if np.random.random() < 0.01:  # Print for 1% of evaluations to avoid spam
+            print(f"Network prediction range: [{pred_np.min():.4f}, {pred_np.max():.4f}]")
+        return pred_np
 
     # Then we evaluate the grid
     if use_octree:
+        print("Using octree evaluation...")
         sdf = eval_grid_octree(coords, eval_func, num_samples=num_samples)
     else:
+        print("Using regular grid evaluation...")
         sdf = eval_grid(coords, eval_func, num_samples=num_samples)
+
+    print(f"Final SDF shape: {sdf.shape}")
+    print(f"Final SDF range: [{sdf.min():.4f}, {sdf.max():.4f}]")
+    print(f"SDF unique values: {len(np.unique(sdf))}")
 
     # Finally we do marching cubes
     try:
         # Debug information
         sdf_min, sdf_max = np.min(sdf), np.max(sdf)
-        print(f"SDF range: [{sdf_min:.4f}, {sdf_max:.4f}]")
+        print(f"SDF stats:")
+        print(f"- Range: [{sdf_min:.4f}, {sdf_max:.4f}]")
+        print(f"- Mean: {np.mean(sdf):.4f}")
+        print(f"- Std: {np.std(sdf):.4f}")
         
-        # Ensure the level is within the SDF range
-        level = 0.0  # Try using 0.0 as the surface level
-        if sdf_min > level or sdf_max < level:
-            # If 0.0 is outside the range, use the middle value
-            level = (sdf_min + sdf_max) / 2
-            print(f"Adjusting surface level to: {level:.4f}")
-            
+        # Use 0 as the level set for the transformed SDF
+        level = 0.0
+        print(f"Using surface level: {level:.4f}")
+        
         try:
             verts, faces, normals, values = measure.marching_cubes(sdf, level)
         except AttributeError:
