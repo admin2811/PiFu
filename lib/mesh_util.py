@@ -42,18 +42,32 @@ def reconstruction(net, cuda, calib_tensor,
 
     # Finally we do marching cubes
     try:
+        # Debug information
+        sdf_min, sdf_max = np.min(sdf), np.max(sdf)
+        print(f"SDF range: [{sdf_min:.4f}, {sdf_max:.4f}]")
+        
+        # Ensure the level is within the SDF range
+        level = 0.0  # Try using 0.0 as the surface level
+        if sdf_min > level or sdf_max < level:
+            # If 0.0 is outside the range, use the middle value
+            level = (sdf_min + sdf_max) / 2
+            print(f"Adjusting surface level to: {level:.4f}")
+            
         try:
-            verts, faces, normals, values = measure.marching_cubes(sdf, 0.5)
+            verts, faces, normals, values = measure.marching_cubes(sdf, level)
         except AttributeError:
             # Fall back to older scikit-image versions
-            verts, faces, normals, values = measure.marching_cubes_lewiner(sdf, 0.5)
+            verts, faces, normals, values = measure.marching_cubes_lewiner(sdf, level)
             
+        print(f"Marching cubes successful: {len(verts)} vertices, {len(faces)} faces")
         # transform verts into world coordinate system
         verts = np.matmul(mat[:3, :3], verts.T) + mat[:3, 3:4]
         verts = verts.T
         return verts, faces, normals, values
     except Exception as e:
         print('error cannot marching cubes:', str(e))
+        print('SDF contains NaN:', np.isnan(sdf).any())
+        print('SDF contains Inf:', np.isinf(sdf).any())
         return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0)
 
 
