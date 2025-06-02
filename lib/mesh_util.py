@@ -47,9 +47,9 @@ def reconstruction(net, cuda, calib_tensor,
         verts = np.matmul(mat[:3, :3], verts.T) + mat[:3, 3:4]
         verts = verts.T
         return verts, faces, normals, values
-    except:
-        print('error cannot marching cubes')
-        return -1
+    except Exception as e:
+        print('error cannot marching cubes:', str(e))
+        return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0)
 
 
 def save_obj_mesh(mesh_path, verts, faces):
