@@ -43,11 +43,12 @@ class Evaluator:
         if opt.load_netG_checkpoint_path:
             netG.load_state_dict(torch.load(opt.load_netG_checkpoint_path, map_location=cuda))
 
-        if opt.load_netC_checkpoint_path is not None:
+        if opt.load_netC_checkpoint_path is not None and os.path.exists(opt.load_netC_checkpoint_path):
             print('loading for net C ...', opt.load_netC_checkpoint_path)
             netC = ResBlkPIFuNet(opt).to(device=cuda)
             netC.load_state_dict(torch.load(opt.load_netC_checkpoint_path, map_location=cuda))
         else:
+            print('netC checkpoint not found or not specified, running without color prediction')
             netC = None
 
         os.makedirs(opt.results_path, exist_ok=True)
