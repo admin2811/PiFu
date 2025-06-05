@@ -33,10 +33,10 @@ class BaseOptions():
                              help='if true, takes images in order to make batches, otherwise takes them randomly')
         g_train.add_argument('--pin_memory', action='store_true', help='pin_memory')
         
-        g_train.add_argument('--batch_size', type=int, default=2, help='input batch size')
+        g_train.add_argument('--batch_size', type=int, default=4, help='input batch size')
         g_train.add_argument('--learning_rate', type=float, default=1e-3, help='adam learning rate')
         g_train.add_argument('--learning_rateC', type=float, default=1e-3, help='adam learning rate')
-        g_train.add_argument('--num_epoch', type=int, default=100, help='num epoch to train')
+        g_train.add_argument('--num_epoch', type=int, default=500, help='num epoch to train')
 
         g_train.add_argument('--freq_plot', type=int, default=10, help='freqency of the error plot')
         g_train.add_argument('--freq_save', type=int, default=50, help='freqency of the save_checkpoints')

@@ -33,11 +33,22 @@ def reconstruction(net, cuda, calib_tensor,
         net.query(samples, calib_tensor)
         pred = net.get_preds()[0][0]
         pred_np = pred.detach().cpu().numpy()
-        # Transform sigmoid output [0,1] to SDF [-1,1]
-        pred_np = 2.0 * pred_np - 1.0
-        # Debug information for predictions
-        if np.random.random() < 0.01:  # Print for 1% of evaluations to avoid spam
-            print(f"Network prediction range: [{pred_np.min():.4f}, {pred_np.max():.4f}]")
+        
+        # Debug raw network output
+        if np.random.random() < 0.01:
+            print(f"Raw network output range: [{pred_np.min():.4f}, {pred_np.max():.4f}]")
+        
+        # Check if prediction is all zeros or ones
+        if np.allclose(pred_np, 0) or np.allclose(pred_np, 1):
+            print("Warning: Network is predicting all same values!")
+        
+        # Transform sigmoid output [0,1] to SDF [-0.5,0.5]
+        pred_np = pred_np - 0.5
+        
+        # Debug transformed output
+        if np.random.random() < 0.01:
+            print(f"Transformed prediction range: [{pred_np.min():.4f}, {pred_np.max():.4f}]")
+        
         return pred_np
 
     # Then we evaluate the grid
@@ -61,6 +72,9 @@ def reconstruction(net, cuda, calib_tensor,
         print(f"- Mean: {np.mean(sdf):.4f}")
         print(f"- Std: {np.std(sdf):.4f}")
         
+        if sdf_min == sdf_max:
+            raise ValueError("SDF has no variation - all values are the same!")
+        
         # Use 0 as the level set for the transformed SDF
         level = 0.0
         print(f"Using surface level: {level:.4f}")
@@ -80,6 +94,7 @@ def reconstruction(net, cuda, calib_tensor,
         print('error cannot marching cubes:', str(e))
         print('SDF contains NaN:', np.isnan(sdf).any())
         print('SDF contains Inf:', np.isinf(sdf).any())
+        print('SDF is all same value:', np.allclose(sdf, sdf[0,0,0]))
         return np.zeros((0, 3)), np.zeros((0, 3)), np.zeros((0, 3)), np.zeros(0)
 
 
